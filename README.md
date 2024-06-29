@@ -1,6 +1,6 @@
 # ARK in js
 
-A rough implementation of some functionalities of the [Alternate Reality Kit](https://www.youtube.com/watch?v=w1HhPE0zV6g).
+A rough implementation of some functionalities of the [Alternate Reality Kit](https://www.youtube.com/watch?v=w1HhPE0zV6g), with some slight modifications and "modern" graphics.
 
 Goals:
 

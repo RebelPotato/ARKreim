@@ -37,3 +37,9 @@ Implement most demos shown in the video, "Smalltalk" changed to "Javascript" whe
 - [ ] create friction
   - [ ] mash several buttons together to create an "add friction" button
   - [ ] promote friction to a law (interactor)
+
+miscellaneous issues (visuals...)
+
+- [ ] change the grid during panning and scaling
+- [ ] get a hand that can cast a shadow
+- [ ] make the ball move smoother

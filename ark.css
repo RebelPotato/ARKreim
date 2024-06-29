@@ -1,0 +1,62 @@
+:root {
+  --ball-color: #f00;
+  --black: #1c1c1c;
+  --white: #fcfcfc;
+  --gray: #e2e2e2;
+  --mid-gray: #6e6e6e;
+}
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: var(--white);
+  background-image: radial-gradient(
+    circle,
+    var(--black) 1px,
+    rgba(0, 0, 0, 0) 1px
+  );
+  background-size: 32px 32px;
+  cursor: url(./public/hand-point.cur), auto;
+}
+
+.grabbed {
+  cursor: url(./public/hand-grab.cur), auto;
+}
+
+#lines {
+  pointer-events: none;
+}
+
+.ball {
+  width: 50px;
+  height: 50px;
+  background-color: var(--ball-color);
+  border-radius: 50%;
+  background-image: radial-gradient(farthest-corner at 33% 33%, #fff, var(--ball-color) 50%);
+  position: absolute;
+}
+
+.interactor {
+  user-select: none;
+  width: 100px;
+  height: 200px;
+  background-color: var(--gray);
+  position: absolute;
+}
+
+.viewport {
+  width: 100px;
+  height: 200px;
+  background-color: yellowgreen;
+  position: absolute;
+}
+
+.button {
+  display: block;
+}
