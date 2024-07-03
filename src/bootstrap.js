@@ -1,3 +1,5 @@
+"use strict";
+
 class Vector {
   constructor(x, y) {
     this.x = x;
@@ -42,271 +44,243 @@ function h(tag, props, children) {
   return element;
 }
 
+/**
+ * a simple function to create SVG elements
+ * @param {string} tag          SVG tag
+ * @param {object} props        an object of attributes
+ * @param {element[]} children  an array of child elements
+ * @returns {element}           a new SVG element
+ */
+function s(tag, props, children) {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  Object.keys(props).forEach((name) => {
+    element.setAttribute(name, props[name]);
+  });
+  children.forEach((child) => {
+    element.appendChild(child);
+  });
+  return element;
+}
+
 function t(text) {
   return document.createTextNode(text);
 }
 
-// a better way: each name in an ARK object holds metadata and data about this slot
-// obj.name.value <=> obj.send(name)
-// set all other objects' prototypes as the warehouse, and add functions to the warehouse
-// then the message menu is just Object.keys(obj).map(name => obj[name])...
+class Rectangle {
+  constructor(center, dimensions) {
+    this.center = center;
+    this.dimensions = dimensions;
+  }
+  get topLeft() {
+    return this.center.sub(this.dimensions.div(2));
+  }
+  get bottomRight() {
+    return this.center.add(this.dimensions.div(2));
+  }
+  get topRight() {
+    return this.center.add(vec(this.dimensions.x / 2, -this.dimensions.y / 2));
+  }
+  get bottomLeft() {
+    return this.center.add(vec(-this.dimensions.x / 2, this.dimensions.y / 2));
+  }
+  contains(point) {
+    const toPoint = this.center.sub(point.center);
+    return (
+      Math.abs(toPoint.x) < this.dimensions.x / 2 &&
+      Math.abs(toPoint.y) < this.dimensions.y / 2
+    );
+  }
+  intersects(other) {
+    const toOther = this.center.sub(other.center);
+    return (
+      Math.abs(toOther.x) < (this.dimensions.x + other.dimensions.x) / 2 &&
+      Math.abs(toOther.y) < (this.dimensions.y + other.dimensions.y) / 2
+    );
+  }
+}
 
-const ARKObjectDoc = `
-\`ARKObject\` is used to create objects in ARK.
+/*
+The ARK scope is the parent of all objects in the world.
+In this way, any ARK Object can respond to the methods in the ARK scope.
 
-An ARK object is a js object where each value is a "slot object",
-with a value and metadata about the slot. 
+So to add a js function to the ARK world, add it to the ARK scope.
+*/
 
-Each slot is annotated with information, such as:
-
-- a name 
-- a **mandatory** markdown doc string
-  - because why write a program if others can't understand it?
-- a list of information about messages it understands
-  - this is used to construct buttons
-
-Any JS object can be annotated and transformed into an ARK object.
-The original object is stored in the \`__original__\` field.
-
-These are available at runtime, so users can view the documentation of any object when the program is running.
-
-There are several essential messages that every ARK object must understand:
-
-- get doc, returns the doc string of the object
-- XEROX, clones the object
-- messages, returns the list of messages the object understands
-
-An interactor should also understand \`step\`, a message sent to it every tick.
-`;
-
-const PreARKObject = {
-  new() {
-    return Object.create(this);
+const ARKScope = {
+  name: "ARKScope",
+  define(name, property) {
+    Object.defineProperty(this, name, property);
   },
-  addSlot(name, doc, value) {
-    this.addMethod(name, "unary", doc, () => value);
+  get prototype() {
+    return Object.getPrototypeOf(this);
+  },
+  set prototype(proto) {
+    Object.setPrototypeOf(this, proto);
+  },
+  assign(things) {
+    Object.defineProperties(this, Object.getOwnPropertyDescriptors(things));
     return this;
   },
-  addSlotMut(name, getterDoc, setterDoc, value) {
-    // crazy hack: store the value in a closure
-    let store = value;
-    this.addMethod(name, "unary", getterDoc, () => store);
-    this.addMethod(`${name}:`, "keyword", setterDoc, function (v) {
-      store = v;
-      return this;
-    });
-    return this;
+  extendAs(name) {
+    return Object.create(this).assign({ name });
   },
-  addMethod(name, type, doc, fn) {
-    if (type !== "unary" && type !== "binary" && type !== "keyword") {
-      throw new Error(
-        `Invalid type: ${type}.\nAllowed types are "unary", "binary" and "keyword".`
-      );
+  messages() {
+    const acc = [];
+    let obj = this;
+    while (obj.name !== "ARKScope") {
+      acc.push({ owner: obj, messages: obj.ownMessages() });
+      obj = obj.prototype;
     }
-    if (typeof fn !== "function") {
-      throw new Error(`${fn} should be a function.`);
-    }
-    this[name] = { type, doc, value: fn.bind(this) };
-    return this;
+    acc.push({ owner: obj, messages: obj.ownMessages() });
+    return acc;
   },
-  send(name, ...args) {
-    if (!this[name]) {
-      throw new Error(`Object does not understand message "${name}".`);
-    }
-    const type = this[name].type;
-    if (type !== "unary" && type !== "binary" && type !== "keyword") {
-      throw new Error(
-        `Cannot send message "${name}" of type "${type}".\nAllowed types are "unary", "binary" and "keyword".`
-      );
-    }
-    const arity =
-      this[name].type === "unary"
-        ? 0
-        : this[name].type === "binary"
-        ? 1
-        : name.split(":").length - 1;
-
-    if (args.length != arity) {
-      throw new Error(`Expected ${arity} arguments, got ${args.length}.`);
-    }
-    return this[name].value(...args);
+  ownMessages() {
+    // No state is hidden. To make a private state, use a closure.
+    return Object.getOwnPropertyDescriptors(this);
   },
 };
 
-function wrap(obj, objDoc, docs) {
-  const wrapped = Object.create(PreARKObject);
-  wrapped.__original__ = obj;
-  wrapped.addSlot("doc", "The documentation of the object.", objDoc);
-  Object.keys(docs).forEach((name) => {
-    const metadata = docs[name];
-    const methodName = name.split(":")[0];
-    wrapped.addMethod(name, metadata.type, metadata.doc, obj[methodName]);
-  });
-  return wrapped;
-}
+/*
+The ARK viewport manages the camera position and scale.
+*/
+const ARKViewport = ARKScope.extendAs("ARKViewport")
+  .assign({
+    reset() {
+      this.rect = new Rectangle(
+        vec(0, 0),
+        vec(window.innerWidth, window.innerHeight)
+      );
+      this.scalePercent = 100;
+      return this;
+    },
+    step() {
+      this.rect.dimensions = vec(window.innerWidth, window.innerHeight);
+      return this;
+    },
+    screenToWorldPos(screenPos) {
+      return screenPos
+        .sub(this.rect.dimensions.div(2))
+        .mul(100 / this.scalePercent)
+        .add(this.rect.center);
+    },
+    worldToScreenPos(worldPos) {
+      return worldPos
+        .sub(this.rect.center)
+        .mul(this.scalePercent / 100)
+        .add(this.rect.dimensions.mul(1 / 2));
+    },
+  })
+  .reset();
 
-const ARKObject = wrap(PreARKObject, ARKObjectDoc, {
-  new: {
-    type: "unary",
-    doc: `Create a new ARK object.`,
+/*
+The ARK world holds information about the visual system, so that:
+
+- an element is added to an appropriate root at most once
+- an ARK Object can know the object it is dropped on
+- the ARK hand can know which object is picked up
+*/
+
+const ARKWorld = ARKScope.extendAs("ARKWorld").assign({
+  objects: new Map(),
+  add(obj) {
+    if (this.objects.has(obj.element)) return false;
+    this.objects.set(obj.element, obj);
+    document.body.appendChild(obj.element);
+    return true;
   },
-  "addSlot:doc:initially:": {
-    type: "keyword",
-    doc: `Add a slot to the ARK object with documentation and an initial value.`,
-  },
-  "addSlotMut:getterDoc:setterDoc:initially:": {
-    type: "keyword",
-    doc: `Add a mutable slot to the ARK object with documentation for a getter and a setter, and an initial value.`,
-  },
-  "addMethod:ofType:doc:fn:": {
-    type: "keyword",
-    doc: `Add a method to the ARK object with a type, documentation, and a function as its implementation.`,
+  remove(obj) {
+    if (!this.objects.has(obj.element)) return false;
+    this.objects.delete(obj.element);
+    document.body.removeChild(obj.element);
+    return true;
   },
 });
 
-function logThis() {
-  console.log(this);
-}
-
-const test1 = ARKObject.send("new").addMethod(
-  "logThis",
-  "unary",
-  `A method that logs the "this" variable.`,
-  logThis
-);
-test1.send("logThis");
-
-const ARKVisualDoc = `
-A Visual ARK object knows:
-- its position in the world
-- an HTML element to represent it
-
-A Visual ARK object should also understand:
-
-- vaporize, removes the object from the world
-- get element, the HTML element representing the object
-- get position, returns the position of the object as a Vector
-- set position, sets the position of the object
-
-`;
-
-/*
-The ARK world is an infinite 2D plane shown in a browser window.
-A Viewport object manages the camera position and scale.
-*/
-const Viewport = {
-  reset() {
-    this.center = vec(0, 0);
-    this.dimensions = vec(window.innerWidth, window.innerHeight);
-    this.scalePercent = 100;
-  },
-  step() {
-    this.dimensions = vec(window.innerWidth, window.innerHeight);
-  },
-  screenToWorld(screenPos) {
-    return screenPos
-      .sub(this.dimensions.div(2))
-      .mul(100 / this.scalePercent)
-      .add(this.center);
-  },
-  placeTo(el, position) {
-    const screenPos = position
-      .sub(this.center)
-      .mul(this.scalePercent / 100)
-      .add(this.dimensions.mul(1 / 2));
+function smartElement(el) {
+  el.defineProperty("rect", {
+    get() {
+      return new Rectangle(
+        vec(
+          this.offsetLeft + this.offsetWidth / 2,
+          this.offsetTop + this.offsetHeight / 2
+        ),
+        vec(this.offsetWidth, this.offsetHeight)
+      );
+    },
+  });
+  el.moveToWorldPos = function (worldPos) {
+    const screenPos = ARKViewport.worldToScreenPos(worldPos);
     if (
-      screenPos.x + el.offsetWidth / 2 < 0 ||
-      screenPos.x - el.offsetWidth / 2 > this.dimensions.x ||
-      screenPos.y + el.offsetHeight / 2 < 0 ||
-      screenPos.y - el.offsetHeight / 2 > this.dimensions.y
+      screenPos.x + this.offsetWidth / 2 < 0 ||
+      screenPos.x - this.offsetWidth / 2 > this.dimensions.x ||
+      screenPos.y + this.offsetHeight / 2 < 0 ||
+      screenPos.y - this.offsetHeight / 2 > this.dimensions.y
     ) {
-      el.style.display = "none";
+      this.style.display = "none";
     } else {
-      el.style.transform = `translate(-50%, -50%) scale(${
+      this.style.transform = `translate(-50%, -50%) scale(${
         this.scalePercent / 100
       })`;
-      el.style.left = `${screenPos.x}px`;
-      el.style.top = `${screenPos.y}px`;
-      el.style.display = "block";
+      this.style.left = `${screenPos.x}px`;
+      this.style.top = `${screenPos.y}px`;
+      this.style.display = "block";
     }
-  },
-};
-Viewport.reset();
-
-/*
-The ARK Warehouse gives you all other objects in the world.
-
-You can spawn any registered ARK object using the objectMenu,
-or spawn an eval button and run any code you want.
-*/
-
-/*
-The ARK world updates the objects' positions and sends them \`step\` messages every frame.
-*/
-
-// a certificate of existence
-class ARKTicket {
-  constructor(world, obj) {
-    this.world = world;
-    this.obj = obj;
-    this.permasending = false;
-  }
-  valid() {
-    return this.world !== null;
-  }
-  throwIfInvalid() {
-    if (!this.valid()) throw new Error("Cannot act on an invalid ticket");
-  }
-  remove() {
-    this.throwIfInvalid();
-    this.world.remove(this.obj);
-    this.world = null;
-  }
-  toggle() {
-    this.throwIfInvalid();
-    this.world.toggle(this.obj);
-    this.permasending = !this.permasending;
-    return this.permasending;
-  }
+  };
 }
+
 /*
-Each browser window has one world.
+An ARK Object is a js object, represented by an HTML element on the screen.
+It belongs to the ARK world and the ARK hand can move it around.
+
+It has a position vector, an element, and a pointer to the world.
+
+Every ARK Object may move in the world, so to construct one, 
+you need to define a moveTo method that moves the object to a new position.
 */
-const ARKWorld = {
+
+const ARKObject = ARKScope.extendAs("ARKObject").assign({
+  new(name, element, position = vec(0, 0)) {
+    return Object.create(this).assign({ name, element, position });
+  },
+  XEROX() {
+    // this method clones a visual object,
+    // so that two identical things with the same function appear on the screen
+    // e.g. cloning the law of gravity
+    const copy = this.prototype.extendAs(this.name).assign(this);
+    copy.element = this.element.cloneNode(true);
+    return copy;
+  },
+  vaporize() {
+    this.world.remove(this);
+  },
+});
+
+/*
+The ARK button represents a function.
+*/
+
+
+/*
+The ARK Timer updates the objects' positions and sends them \`step\` messages every frame.
+*/
+
+const ARKTimer = ARKScope.extendAs("ARKTimer").assign({
   tps: 40,
   tick: 0,
   running: false,
   objects: new Set(),
-  interacting: new Set(),
   add(obj) {
     this.objects.add(obj);
-    Viewport.placeTo(obj.element, obj.position);
-    obj.root.appendChild(obj.element);
-    return new ARKTicket(this, obj);
-  },
-  remove(obj) {
-    if (this.interacting.has(obj)) {
-      this.interacting.delete(obj);
-    }
-    this.objects.delete(obj);
-    obj.root.removeChild(obj.element);
     return this;
   },
-  toggle(obj) {
-    if (this.interacting.has(obj)) {
-      this.interacting.delete(obj);
-    } else {
-      this.interacting.add(obj);
-    }
+  remove(obj) {
+    this.objects.delete(obj);
     return this;
   },
   step() {
     this.tick++;
-    this.interacting.forEach((obj) => {
-      obj.step(this.tick);
-    });
     this.objects.forEach((obj) => {
-      Viewport.placeTo(obj.element, obj.position);
+      obj.step(this.tick);
     });
     return this.tick;
   },
@@ -325,4 +299,51 @@ const ARKWorld = {
   off() {
     this.running = false;
   },
+});
+
+/*
+The ARK warehouse is the main object for spawning other objects.
+It understands:
+
+- add, registers a new object to add to the world
+- objectList, returns a list of all objects to spawn
+- objectMenu, creates a menu of objects to spawn
+  - if the object is not an ARK object (its prototype is not ARKObject), an representation is created instead
+*/
+
+const ARKWarehouse = {
+  objects: new Set(),
+  add(obj) {
+    this.objects.add(obj);
+  },
+  objectList() {
+    return Array.from(this.objects).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  },
+  objectMenu() {
+    return h(
+      "div",
+      {},
+      this.objectList().map((obj) => {
+        return h(
+          "button",
+          {
+            onclick: `ARKWarehouse.spawn(${obj.name})`,
+          },
+          [t(obj.name)]
+        );
+      })
+    );
+  },
+  spawn(obj) {
+    return ARKWorld.add(obj.XEROX());
+  },
 };
+
+/*
+The ARK Warehouse gives you all other objects in the world.
+
+You can spawn any registered ARK object using the objectMenu,
+or spawn an eval button and run any code you want.
+*/
