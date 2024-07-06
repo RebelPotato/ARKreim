@@ -178,7 +178,7 @@ const ARKScreen = ARKScope.new("ARKScreen").assign({
   findIntersecting(obj) {
     const rect = obj.rect;
     const allObjs = [...this.objects.values()].sort(
-      (a, b) => a.zHeight - b.zHeight
+      (a, b) => b.zHeight - a.zHeight
     );
     return allObjs.filter(
       (other) => other !== obj && rect.intersects(other.rect)
@@ -290,28 +290,24 @@ const ARKHand = ARKScope.new("ARKHand").assign({
     const worldPos = ARKViewport.screenToWorldPos(screenPos).add(this.delta);
     this.holding.moveTo(worldPos);
   },
-});
-document.addEventListener("mousedown", (e) => {
-  // TODO: add one event listener to every object's element, making findOwner unnecessary
-  const el = document.elementFromPoint(e.clientX, e.clientY);
-  const obj = ARKScreen.findOwner(el);
-  if (obj && obj instanceof ARKThing) {
-    console.log(obj);
+  hold(obj, e) {
+    if (this.state !== "open") return;
     if (e.button === 0 && ARKScreen.pressedKeys.has("Shift")) {
-      ARKHand.state = "moving";
+      this.state = "moving";
     } else if (e.button === 1) {
-      obj.onHold();
-      ARKHand.state = "holding";
-    } else return;
-    ARKHand.holding = obj;
-    ARKHand.delta = obj.position.sub(
+      obj.onHeld();
+      this.state = "holding";
+    } else return false;
+    this.holding = obj;
+    this.delta = obj.position.sub(
       ARKViewport.screenToWorldPos(ARKScreen.mouse)
     );
-  }
+    return true;
+  },
 });
 document.addEventListener("mouseup", (e) => {
   if (!ARKHand.holding) return;
-  if (ARKHand.state === "holding") ARKHand.holding.onRelease();
+  if (ARKHand.state === "holding") ARKHand.holding.onReleased();
   ARKHand.holding = null;
   ARKHand.state = "open";
 });
@@ -321,7 +317,6 @@ ARKTimer.add(ARKHand);
 An ARK Object is a js object, represented by an HTML element on the screen.
 The ARK hand can move it around.
 
-It has a position vector, an element, and a name.
 */
 
 class ARKThing extends ARKScope {
@@ -333,6 +328,10 @@ class ARKThing extends ARKScope {
     this.position = position;
     this.zHeight = zHeight;
     ARKScreen.add(this);
+    this.element.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      ARKHand.hold(this, e);
+    });
   }
   static new({ name, element, position = vec(0, 0) }) {
     return new this({ name, element, position });
@@ -396,14 +395,14 @@ class ARKThing extends ARKScope {
     });
   }
   vaporize() {
-    this.world.remove(this);
+    ARKScreen.remove(this);
   }
-  onHold() {
+  onHeld() {
     // called when the object is picked up
     this.element.style.zIndex = 10000;
     this.element.classList.add("held");
   }
-  onRelease() {
+  onReleased() {
     // called when the object is dropped
     this.element.style.zIndex = this.zHeight;
     this.element.classList.remove("held");
@@ -417,12 +416,13 @@ class ARKThing extends ARKScope {
 /*
 An ARK Object that represents another JS Object.
 */
-class ARKRepresentative extends ARKThing {
-  constructor({ name, object, position = vec(0, 0) }) {
+class ARKStand extends ARKThing {
+  constructor({ name, object, position = vec(0, 0), zHeight = 1}) {
     super({
       name,
-      element: h("div", { class: "representative" }, [name]),
+      element: h("div", { class: "representative" }, [name]), // TODO: better representation
       position,
+      zHeight,
     });
     this.object = object;
   }
@@ -432,8 +432,8 @@ class ARKRepresentative extends ARKThing {
 }
 
 class ARKActiveThing extends ARKThing {
-  constructor({ name, element, position = vec(0, 0) }) {
-    super({ name, element, position });
+  constructor({ name, element, position = vec(0, 0), zHeight = 1}) {
+    super({ name, element, position, zHeight });
     ARKTimer.add(this);
   }
   XEROX() {
@@ -444,12 +444,14 @@ class ARKActiveThing extends ARKThing {
     });
   }
   step() {}
-  onHold() {
-    super.onHold();
+  onHeld() {
+    // TODO
+    super.onHeld();
     ARKTimer.remove(this);
   }
-  onRelease() {
-    super.onRelease();
+  onReleased() {
+    // TODO
+    super.onReleased();
     ARKTimer.add(this);
   }
 }
@@ -458,8 +460,8 @@ class ARKActiveThing extends ARKThing {
 ARK Objects that other objects can stick to.
 */
 class ARKStickableThing extends ARKThing {
-  constructor({ name, element, position = vec(0, 0) }) {
-    super({ name, element, position });
+  constructor({ name, element, position = vec(0, 0), zHeight = 1}) {
+    super({ name, element, position, zHeight });
     this.stuck = new Map();
   }
   XEROX() {
@@ -498,7 +500,7 @@ The ARK button represents an action, whether a function or a message call.
 */
 
 class ARKButton extends ARKStickableThing {
-  constructor({ position, action }) {
+  constructor({ position, action, zHeight = 1}) {
     super({
       name: `${action.verb} ${action.name}`,
       element: h("button", { class: "button" }, [
@@ -506,12 +508,17 @@ class ARKButton extends ARKStickableThing {
         action.name,
       ]),
       position,
+      zHeight
     });
     this.action = action;
     this.stuckTo = null;
-    this.element.addEventListener("click", () => {
-      let receiver = this;
+    this.element.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (e.button !== 0) return;
+      if (ARKScreen.pressedKeys.has("Shift")) return;
+      let receiver = undefined;
       if (this.stuckTo) receiver = this.stuckTo.receiver();
+      this.action.throwIfCannotRun(receiver);
       const result = this.action.run(receiver);
       // TODO: spawn result in the world
       console.log(result);
@@ -520,8 +527,8 @@ class ARKButton extends ARKStickableThing {
   XEROX() {
     return new ARKButton({
       position: this.position.add(vec(10, 10)),
-      name: this.name,
       action: this.action,
+      zHeight: this.zHeight + 1,
     });
   }
   canStick(obj) {
@@ -539,20 +546,20 @@ class ARKButton extends ARKStickableThing {
     this.element.classList.add("stuck");
     return true;
   }
-  onHold() {
-    super.onHold();
+  onHeld() {
+    super.onHeld();
     if (this.stuckTo) {
       this.stuckTo.peel(this);
       this.stuckTo = null;
       this.element.classList.remove("stuck");
     }
   }
-  onRelease() {
-    super.onRelease();
+  onReleased() {
+    super.onReleased();
     const objs = ARKScreen.findIntersecting(this);
     for (const other of objs) {
-      if (other instanceof ARKStickableThing){
-        if(this.stickTo(other)) return;
+      if (other instanceof ARKStickableThing) {
+        if (this.stickTo(other)) return;
         this.zHeight = other.zHeight - 1;
       }
     }
@@ -567,6 +574,7 @@ class ARKFunctionAction {
     this.verb = "do";
     this.name = fn.name;
   }
+  throwIfCannotRun(receiver) {}
   run(receiver) {
     return this.fn.bind(receiver)();
   }
@@ -581,6 +589,15 @@ class ARKMessageAction {
     this.messageName = messageName;
     this.verb = "send";
     this.name = messageName;
+  }
+  throwIfCannotRun(receiver) {
+    if (!this.canActOn(receiver)) {
+      throw new Error(
+        `Cannot send message ${this.messageName} to ${
+          receiver.name || receiver.toString()
+        }`
+      );
+    }
   }
   run(receiver) {
     return receiver[this.messageName]();
@@ -613,6 +630,27 @@ const XEROX = new ARKButton({
 // TODO: an interactor is an Active and Stickable thing. Inheritence bad, composition good!
 // factor the "active" into a "resource" object
 
+class ARKMenuItem extends ARKThing {
+  constructor({ name, action, position = vec(0, 0), zHeight = 1}) {
+    super({
+      name,
+      element: h("button", { class: "menu-item" }, [name]),
+      position,
+      zHeight
+    });
+    this.action = action;
+    this.element.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (e.button !== 0) return;
+      if (ARKScreen.pressedKeys.has("Shift")) return;
+      let receiver = undefined;
+      this.action.throwIfCannotRun(receiver);
+      const result = this.action.run(receiver);
+    });
+  }
+}
+
+
 /*
 The ARK warehouse is the main object for spawning other objects.
 It understands:
@@ -623,24 +661,20 @@ It understands:
   - if the object is not an ARK object (its prototype is not ARKThing), an representation is created instead
 */
 
-const ARKWarehouse = ARKThing.new({
+
+const ARKWarehouse = ARKStickableThing.new({
   name: "ARKWarehouse",
   element: h(
-    "p",
+    "div",
     {
-      style: "position: absolute; top: 0; left: 0; background-color: white",
+      class: "warehouse",
     },
-    ["I'm a war horse"]
+    ["Warehouse"]
   ),
 }).assign({
   objects: new Set(),
   add(obj) {
     this.objects.add(obj);
-  },
-  objectList() {
-    return Array.from(this.objects).sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
   },
   objectMenu() {
     // TODO

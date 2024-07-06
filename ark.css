@@ -3,12 +3,14 @@
   --black: #1c1c1c;
   --white: #fcfcfc;
   --gray: #e2e2e2;
+  --moon-gray: #cccccc;
   --mid-gray: #6e6e6e;
 }
 * {
   box-sizing: border-box;
   cursor: url(./public/hand-point.cur), auto;
   will-change: transform, scale;
+  font-family:'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif
 }
 
 body {
@@ -59,7 +61,12 @@ body {
   display: block;
   position: absolute;
   user-select: none;
-  box-shadow: 0px 0px 2px var(--mid-gray);
+  border: 4px outset var(--gray);
+  background-color: var(--moon-gray);
+}
+
+.button:active {
+  border: 4px inset var(--gray);
 }
 
 .held {
@@ -68,7 +75,24 @@ body {
   scale: 1.1;
 }
 
+.held > * {
+  cursor: url(./public/hand-grab.cur), auto;
+}
+
 .stuck {
-  box-shadow: 2px 2px 2px var(--mid-gray);
+  box-shadow: 2px 2px 1px var(--mid-gray);
   scale: 1.05;
+}
+
+.warehouse {
+  width: 100px;
+  height: 100px;
+  border: 4px outset var(--gray);
+  border-bottom: 2px var(--moon-gray);
+  background-color: var(--moon-gray);
+  position: absolute;
+
+  font-size: small;
+  text-align: center;
+  margin-top: 4px;
 }
