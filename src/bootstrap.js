@@ -30,6 +30,10 @@ function vec(x, y) {
   return new Vector(x, y);
 }
 
+function t(text) {
+  return document.createTextNode(text);
+}
+
 /**
  * a simple function to create HTML elements
  * @param {string} tag          HTML tag
@@ -43,7 +47,9 @@ function h(tag, props, children) {
     element.setAttribute(name, props[name]);
   });
   children.forEach((child) => {
-    element.appendChild(child);
+    const el =
+      child instanceof Element ? child : document.createTextNode(child);
+    element.appendChild(el);
   });
   return element;
 }
@@ -64,10 +70,6 @@ function s(tag, props, children) {
     element.appendChild(child);
   });
   return element;
-}
-
-function t(text) {
-  return document.createTextNode(text);
 }
 
 class Rectangle {
@@ -290,13 +292,15 @@ const ARKHand = ARKScope.new("ARKHand").assign({
   },
 });
 document.addEventListener("mousedown", (e) => {
+  // TODO: add one event listener to every object's element, making findOwner unnecessary
   const el = document.elementFromPoint(e.clientX, e.clientY);
   const obj = ARKScreen.findOwner(el);
   if (obj && obj instanceof ARKThing) {
+    console.log(obj);
     if (e.button === 0 && ARKScreen.pressedKeys.has("Shift")) {
       ARKHand.state = "moving";
     } else if (e.button === 1) {
-      obj.hold();
+      obj.onHold();
       ARKHand.state = "holding";
     } else return;
     ARKHand.holding = obj;
@@ -307,7 +311,7 @@ document.addEventListener("mousedown", (e) => {
 });
 document.addEventListener("mouseup", (e) => {
   if (!ARKHand.holding) return;
-  if (ARKHand.state === "holding") ARKHand.holding.release();
+  if (ARKHand.state === "holding") ARKHand.holding.onRelease();
   ARKHand.holding = null;
   ARKHand.state = "open";
 });
@@ -385,27 +389,26 @@ class ARKThing extends ARKScope {
     // this method clones a visual object,
     // so that two identical things with the same function appear on the screen
     // e.g. cloning the law of gravity
-    const copy = ARKThing.new({
+    return ARKThing.new({
       name: this.name,
       element: this.element.cloneNode(true),
       position: this.position.add(vec(10, 10)),
     });
-    return copy;
   }
   vaporize() {
     this.world.remove(this);
   }
-  hold() {
+  onHold() {
     // called when the object is picked up
     this.element.style.zIndex = 10000;
     this.element.classList.add("held");
   }
-  release() {
+  onRelease() {
     // called when the object is dropped
     this.element.style.zIndex = this.zHeight;
     this.element.classList.remove("held");
   }
-  sender() {
+  receiver() {
     // this method returns the object that a button should send to.
     return this;
   }
@@ -418,12 +421,12 @@ class ARKRepresentative extends ARKThing {
   constructor({ name, object, position = vec(0, 0) }) {
     super({
       name,
-      element: h("div", { class: "representative" }, [t(name)]),
+      element: h("div", { class: "representative" }, [name]),
       position,
     });
     this.object = object;
   }
-  sender() {
+  receiver() {
     return this.object;
   }
 }
@@ -433,13 +436,20 @@ class ARKActiveThing extends ARKThing {
     super({ name, element, position });
     ARKTimer.add(this);
   }
+  XEROX() {
+    return ARKActiveThing.new({
+      name: this.name,
+      element: this.element.cloneNode(true),
+      position: this.position.add(vec(10, 10)),
+    });
+  }
   step() {}
-  hold() {
-    super.hold();
+  onHold() {
+    super.onHold();
     ARKTimer.remove(this);
   }
-  release() {
-    super.release();
+  onRelease() {
+    super.onRelease();
     ARKTimer.add(this);
   }
 }
@@ -451,6 +461,13 @@ class ARKStickableThing extends ARKThing {
   constructor({ name, element, position = vec(0, 0) }) {
     super({ name, element, position });
     this.stuck = new Map();
+  }
+  XEROX() {
+    return ARKStickableThing.new({
+      name: this.name,
+      element: this.element.cloneNode(true),
+      position: this.position.add(vec(10, 10)),
+    });
   }
   canStick(obj) {
     return !this.stuck.has(obj);
@@ -477,75 +494,124 @@ class ARKStickableThing extends ARKThing {
 }
 
 /*
-The ARK button represents a function.
+The ARK button represents an action, whether a function or a message call.
 */
 
 class ARKButton extends ARKStickableThing {
-  constructor({ position, fn }) {
+  constructor({ position, action }) {
     super({
-      name: fn.name,
-      element: h("button", { class: "button" }, [t(fn.name)]),
+      name: `${action.verb} ${action.name}`,
+      element: h("button", { class: "button" }, [
+        h("em", {}, [`${action.verb} `]),
+        action.name,
+      ]),
       position,
     });
-    this.fn = fn;
+    this.action = action;
     this.stuckTo = null;
     this.element.addEventListener("click", () => {
-      // TODO: spawn result in a new object
-      if(this.stuckTo) {
-        const newThis = this.stuckTo.sender();
-        this.fn.bind(newThis)();
-      }
-      else {
-        this.fn();
-      }
+      let receiver = this;
+      if (this.stuckTo) receiver = this.stuckTo.receiver();
+      const result = this.action.run(receiver);
+      // TODO: spawn result in the world
+      console.log(result);
+    });
+  }
+  XEROX() {
+    return new ARKButton({
+      position: this.position.add(vec(10, 10)),
+      name: this.name,
+      action: this.action,
     });
   }
   canStick(obj) {
-    if(!super.canStick(obj)) return false;
+    if (!super.canStick(obj)) return false;
     // walk the "stuckTo" chain to see if we are already stuck to this object
-    for(let o = this.stuckTo; o && o instanceof ARKButton; o = o.stuckTo) {
-      if(o === obj) return false;
+    for (let o = this.stuckTo; o && o instanceof ARKButton; o = o.stuckTo) {
+      if (o === obj) return false;
     }
+    return this.action.canActOn(obj.receiver());
+  }
+  stickTo(other) {
+    if (!other.stick(this)) return false;
+    this.stuckTo = other;
+    this.zHeight = other.zHeight + 1;
+    this.element.classList.add("stuck");
     return true;
   }
-  hold() {
-    super.hold();
+  onHold() {
+    super.onHold();
     if (this.stuckTo) {
       this.stuckTo.peel(this);
       this.stuckTo = null;
       this.element.classList.remove("stuck");
     }
   }
-  release() {
-    super.release();
+  onRelease() {
+    super.onRelease();
     const objs = ARKScreen.findIntersecting(this);
     for (const other of objs) {
-      if (other instanceof ARKStickableThing && other.stick(this)) {
-        this.stuckTo = other;
-        this.zHeight = 2;
-        this.element.classList.add("stuck");
-        return;
+      if (other instanceof ARKStickableThing){
+        if(this.stickTo(other)) return;
+        this.zHeight = other.zHeight - 1;
       }
     }
     this.stuckTo = null;
     this.zHeight = 0;
   }
-  moveTo(worldPos) {
-    const pos = this.position;
-    if (worldPos.eq(pos)) return;
-    super.moveTo(worldPos);
+}
+
+class ARKFunctionAction {
+  constructor(fn) {
+    this.fn = fn;
+    this.verb = "do";
+    this.name = fn.name;
+  }
+  run(receiver) {
+    return this.fn.bind(receiver)();
+  }
+  canActOn(_receiver) {
+    // a function can bind "this" to any object
+    return true;
   }
 }
+
+class ARKMessageAction {
+  constructor(messageName) {
+    this.messageName = messageName;
+    this.verb = "send";
+    this.name = messageName;
+  }
+  run(receiver) {
+    return receiver[this.messageName]();
+  }
+  canActOn(receiver) {
+    // send a message only if the receiver has the method
+    return typeof receiver[this.messageName] === "function";
+  }
+}
+
 function logThis() {
   console.log("This is", this);
 }
 function helloWorld() {
   console.log("Hello, world!");
 }
-const bTest = new ARKButton({position: vec(100, 100), fn: helloWorld});
-const bLog = new ARKButton({position: vec(200, 100), fn: logThis});
+const bTest = new ARKButton({
+  position: vec(100, 100),
+  action: new ARKFunctionAction(helloWorld),
+});
+const bLog = new ARKButton({
+  position: vec(200, 100),
+  action: new ARKFunctionAction(logThis),
+});
+const XEROX = new ARKButton({
+  position: vec(300, 100),
+  action: new ARKMessageAction("XEROX"),
+});
 
 // TODO: an interactor is an Active and Stickable thing. Inheritence bad, composition good!
+// factor the "active" into a "resource" object
 
 /*
 The ARK warehouse is the main object for spawning other objects.
@@ -564,7 +630,7 @@ const ARKWarehouse = ARKThing.new({
     {
       style: "position: absolute; top: 0; left: 0; background-color: white",
     },
-    [t("I'm a war horse")]
+    ["I'm a war horse"]
   ),
 }).assign({
   objects: new Set(),
